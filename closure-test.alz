@@ -1,0 +1,6 @@
+main-func := (fn (x y) {
+  (λ z { (x + (y + z)) })
+})
+
+xy := (main-func(1 1))
+xy(1)
