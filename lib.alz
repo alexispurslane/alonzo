@@ -1,22 +1,22 @@
-true  ↦ (fn (x y) { (x) })
-false ↦ (fn (x y) { (y) })
-if ↦ (fn (b x y) { (b(x y)) })
-unless ↦ (fn (b x y) { (b(y x)) })
+(true  ↦ (fn (x y) { (x) }))
+(false ↦ (fn (x y) { (y) }))
+(if ↦ (fn (b x y) { (b(x y)) }))
+(unless ↦ (fn (b x y) { (b(y x)) }))
 
-empty-list ↦ undefined
+(empty-list ↦ undefined)
 
-cons ↦ (fn (el list) {
+(cons ↦ (fn (el list) {
   (λ selector { (selector(el list)) })
-})
+}))
 
-head ↦ (fn (list) {
+(head ↦ (fn (list) {
   (list((fn (h t) { h })))
-})
+}))
 
-tail ↦ (fn (list) {
+(tail ↦ (fn (list) {
   (list((fn (h t) { t })))
-})
+}))
 
-empty? ↦ (fn (list) {
+(empty? ↦ (fn (list) {
   (list == null)
-})
+}))
