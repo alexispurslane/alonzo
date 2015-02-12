@@ -1,82 +1,141 @@
 #lang racket
 (require 2htdp/batch-io)
+(provide (contract-out
+           [split ((compose not null?) list? . -> . list?)]
+           [exec-repl (-> null?)]
+           [exec ((compose not null?) . -> . (compose not null?))]
+           [exec-file (string? . -> . list?)]))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; ;;;;;;;;;; ;;;;;;;;;; ;;;;;;;;;; ;;      ;; ;;;;;;;;;;
+; ;;         ;;             ;;     ;;      ;; ;;      ;;
+; ;;;;;;;;;; ;;;;;;;;       ;;     ;;      ;; ;;;;;;;;;;
+;         ;; ;;             ;;     ;;      ;; ;;
+; ;;;;;;;;;; ;;;;;;;;;;     ;;     ;;;;;;;;;; ;;         "Get ready for THIS!"
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+
+; Set up namespaces and global variables for language. TODO: Make *area* non-mutable.
 (define-namespace-anchor anc)
 (define ns (namespace-anchor->namespace anc))
-(define area '())
-(define (lookup key list block-level (rep #f))
+(define *area* '())
+(define separator '..)
+
+; Custom assoc-type function, with all unbound identifiers being symbols, and allowing for scoping.
+(define (lookup key list block-level)
+  (define new-list (filter (compose (curry >= block-level) third) list))
   (define result (assoc key
-                        (filter (lambda (e)
-                                  (or (<= (third e) block-level) rep)) list)))
+                        new-list))
   (cond
-    [(not result) (displayln (string-append "Cannot locate variable for " (symbol->string key) ", from block level: " (number->string block-level)))]
-    [(eq? (second result) key) (lookup key (cdr list) block-level #t)]
+    [(false? result) #f]
+    [(eq? (second result) key)
+     (lookup key (rest list) block-level)]
     [else result]))
 
+; This allows me to interface boolean operations from racket into alonzo
 (define (convert-bool bool)
-  (if bool (exec '(true)) (exec '(false))))
+  (if bool
+    (exec '(true))
+    (exec '(false))))
 
+; Allows for constructing recursive calls from flat calls. Saves parenthisis.
 (define (parenify list (level 0))
   (cond
     [(null? list) '()]
     [(= level 0)
-     (cons (car list) (parenify (cdr list) (+ level 1)))]
-    [else `(,(car list) ,(parenify (cdr list)))]))
+     (cons (first list) (parenify (rest list) (+ level 1)))]
+    [else `(,(first list) ,(parenify (rest list)))]))
 
+; Turns a list of symbols into a string
 (define (slist->string slst)
   (string-join (map symbol->string slst) " "))
 
+(define (index-of l x)
+  (for/or ([y l] [i (in-naturals)] #:when (equal? x y)) i))
+
+; Split a list by a certain recurring element.
+(define (split a loa)
+  (cond
+    [(null? loa) '()]
+    [else (cons (take loa (or (index-of loa a) (length loa)))
+                (split a (drop loa (if (index-of loa a)
+                                     (add1 (index-of loa a))
+                                     (length loa)))))]))
+; A untility funciton to copy lists.
+(define (full-copy list)
+  (if (null? list)
+    '()
+    (if (list? list)
+      (cons (full-copy (car list)) (full-copy (cdr list)))
+      list)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; ;;;;;;;;;;     ;;        ;;  ;;;;;;;;;;     ;;;;;;;;;;
+; ;;               ;;    ;;    ;;             ;;
+; ;;;;;;;;           ;;;;      ;;;;;;;;       ;;
+; ;;               ;;    ;;    ;;             ;;
+; ;;;;;;;;;;     ;;        ;;  ;;;;;;;;;;     ;;;;;;;;;;  "The heart of the alonzo language"
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(define (exec code [block-level 0] [area *area*])
+  (if (and (list? code) (not (equal? (memq separator code) #f)))
+    (last (map (λ (e) (exec e block-level)) (split separator code)))
+    (match code
+      [`(λ ,arg ,body)       (list `(,arg) `,(split separator body) (full-copy area))]
+      [`(\\ ,arg ,body)       (list `(,arg) `,(split separator body) (full-copy area))]
+      [`(fn ,args ,body)     (list `,args `,(split separator  body) (full-copy area))]
+      [`(l ,lst)             (exec (parenify (add-between (flatten (cons lst 'empty-list)) ':)) block-level)]
 
-(define (exec code [block-level 0])
-  (match code
-                [(list 'begin thing ... 'end)   (car (cdr (map exec thing)))]
-                [`(λ ,arg ,body)    (list `(,arg) `,body 'func)]
-                [`(fn ,args ,body)  (list `,args `,body 'func)]
-                [`(l ,lst) (exec (parenify (add-between (flatten (cons lst 'empty-list)) ':)) block-level)]
-                
-                [`(let ,assocs ,body) (for ([i assocs])
-                                        (set! area (cons (list i (+ block-level 1)) area)))
-                                      (exec body (+ block-level 1))]
-                
-                [`(,thing ,args) (define fn (exec thing block-level))
-                                 (for ([v args]
-                                       [k (car fn)])
-                                   (set! area (cons (list k v (+ block-level 1)) area)))
-                                 (last (map (lambda (e)
-                                              (exec e (+ block-level 1))) (second fn)))]
-                
-                [`(,a + ,b)            (+ (exec a) (exec b))]
-                [`(,a - ,b)            (- (exec a) (exec b))]
-                [`(,a * ,b)            (* (exec a) (exec b))]
-                [`(,a / ,b)            (/ (exec a) (exec b))]
-                [`(,a == ,b)           (convert-bool (equal? (exec a) (exec b)))]
-                [`(,a : ,b)            (exec `(cons (,a ,b)))]
-                
-                [`(,a := ,b)            (set! area (cons `(,a ,b ,block-level) area))
-                                        (exec `,a block-level)]
-                [`(,a ↦ ,b)            (set! area (cons `(,a ,b ,block-level) area))
-                                       (exec `,a block-level)]
-                
-                [`undefined               'undefined]
-                [(? integer?)          code]
-                [(? string?)           code]
-                [(? symbol?)           (exec (second (lookup code area block-level)) block-level)]
-                [`(,thing)             (exec thing block-level)]
-                ['()                   (exec '(undefined))]))
+      [`(let ,assocs ,body)  (for ([i assocs])
+                               (set! *area* (cons (list i (+ block-level 1)) area)))
+                             (exec body (+ block-level 1))]
 
+      [`(,thing ,args)       (define fn (exec thing block-level))
+                             (define a  (third fn))
+                             (for ([v args]
+                                   [k (first fn)])
+                               (set! a (cons (list k v (+ block-level 1)) a)))
+                             (last (map (lambda (e)
+                                          (exec e (+ block-level 1) a)) (second fn)))]
+      [`(,a + ,b)            (+ (exec a block-level area) (exec b block-level area))]
+      [`(,a - ,b)            (- (exec a block-level area) (exec b block-level area))]
+      [`(,a * ,b)            (* (exec a block-level area) (exec b block-level area))]
+      [`(,a / ,b)            (/ (exec a block-level area) (exec b block-level area))]
+      [`(,a == ,b)           (convert-bool (equal? (exec a block-level area) (exec b block-level area)))]
+      [`(,a <= ,b)           (convert-bool (<= (exec a block-level area) (exec b block-level area)))]
+      [`(,a >= ,b)           (convert-bool (>= (exec a block-level area) (exec b block-level area)))]
+      [`(,a > ,b)            (convert-bool (> (exec a block-level area) (exec b block-level area)))]
+      [`(,a < ,b)            (convert-bool (< (exec a block-level area) (exec b block-level area)))]
+      [`(,a : ,b)            (exec `(cons (,a ,b)) block-level area)]
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+      [`(,a := ,b)           (set! *area* (cons `(,a ,b ,block-level) area))
+                             (exec `,a block-level area)]
+      [`(,a ↦ ,b)            (set! *area* (cons `(,a ,b ,block-level) area))
+                             (exec `,a block-level area)]
+      ['undefined            'undefined]
+      ['(undefined)          'undefined]
+      [(? integer?)          code]
+      [(? string?)           code]
+      [(? symbol?)           (let ([look (lookup code area block-level)])
+                               (if look
+                                 (exec (second look) block-level area)
+                                 code))]
+      [`(,thing)             (exec thing block-level area)]
+      ['()                   (exec '(undefined))])))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; ;;;;;;;;;; ;;;;      ;; ;;;;;;;;;; ;;;;;;;;;; ;;;;;;;;;; ;;;;;;;;;; ;;;;;;;;;; ;;;;;;;;;; ;;;;;;;;;;
+;     ;;     ;;  ;;    ;;     ;;     ;;         ;;      ;; ;;         ;;      ;; ;;         ;;
+;     ;;     ;;    ;;  ;;     ;;     ;;;;;;;;   ;;;;;;;;;; ;;;;;;;;   ;;;;;;;;;; ;;         ;;;;;;;;
+;     ;;     ;;      ;;;;     ;;     ;;         ;;;;;      ;;         ;;      ;; ;;         ;;
+; ;;;;;;;;;; ;;        ;;     ;;     ;;;;;;;;;; ;;  ;;;;;; ;;         ;;      ;; ;;;;;;;;;; ;;;;;;;;;;           "How you know this stuff is working."
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
 (define (exec-repl)
+  (display ">>>(Alonzo)>>> ")
   (displayln (exec (read (open-input-string (string-append "(" (read-line) ")")))))
   (exec-repl))
 
 (define (exec-file file-name)
-  (map exec (file->list file-name)))
-
-(exec-file "lib.alz")
-(exec-repl)
+  (map exec (split separator (file->list file-name))))
