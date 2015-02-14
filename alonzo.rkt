@@ -23,13 +23,14 @@
 
 ; Custom assoc-type function, with all unbound identifiers being symbols, and allowing for scoping.
 (define (lookup key list block-level)
+  (pretty-print list)
   (define new-list (filter (compose (curry >= block-level) third) list))
   (define result (assoc key
                         new-list))
   (cond
     [(false? result) #f]
-    [(eq? (second result) key)
-     (lookup key (rest list) block-level)]
+    [(and (list? (second result)) (equal? (first (second result)) 'ref))
+     (lookup (second (second result)) (rest list) block-level)]
     [else result]))
 
 ; This allows me to interface boolean operations from racket into alonzo
@@ -69,6 +70,14 @@
       (cons (full-copy (car list)) (full-copy (cdr list)))
       list)))
 
+; Repeat an element n times.
+(define (repeat el n)
+  (cond
+    [(zero? n) '()]
+    [else (cons el (repeat el (sub1 n)))]))
+
+(define (zip . lists) (apply map list lists))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; ;;;;;;;;;;     ;;        ;;  ;;;;;;;;;;     ;;;;;;;;;;
 ; ;;               ;;    ;;    ;;             ;;
@@ -86,17 +95,11 @@
       [`(fn ,args ,body)     (list `,args `,(split separator  body) (full-copy area))]
       [`(l ,lst)             (exec (parenify (add-between (flatten (cons lst 'empty-list)) ':)) block-level)]
 
-      [`(let ,assocs ,body)  (for ([i assocs])
-                               (set! *area* (cons (list i (+ block-level 1)) area)))
-                             (exec body (+ block-level 1))]
-
-      [`(,thing ,args)       (define fn (exec thing block-level))
-                             (define a  (third fn))
-                             (for ([v args]
-                                   [k (first fn)])
-                               (set! a (cons (list k v (+ block-level 1)) a)))
+      [`(,thing ,args)       (define fn (exec thing block-level area))
+                             (pretty-print fn)
+                             (define a (third fn))
                              (last (map (lambda (e)
-                                          (exec e (+ block-level 1) a)) (second fn)))]
+                                          (exec e (+ block-level 1) (append (zip (first fn) args (repeat (add1 block-level) (length args))) a))) (second fn)))]
       [`(,a + ,b)            (+ (exec a block-level area) (exec b block-level area))]
       [`(,a - ,b)            (- (exec a block-level area) (exec b block-level area))]
       [`(,a * ,b)            (* (exec a block-level area) (exec b block-level area))]
@@ -108,9 +111,13 @@
       [`(,a < ,b)            (convert-bool (< (exec a block-level area) (exec b block-level area)))]
       [`(,a : ,b)            (exec `(cons (,a ,b)) block-level area)]
 
-      [`(,a := ,b)           (set! *area* (cons `(,a ,b ,block-level) area))
+      [`(,a := ,b)           (set! *area* (cons `(,a ,(if (lookup b area block-level)
+                                                        `(ref ,b)
+                                                        b) ,block-level) area))
                              (exec `,a block-level area)]
-      [`(,a ↦ ,b)            (set! *area* (cons `(,a ,b ,block-level) area))
+      [`(,a ↦ ,b)            (set! *area* (cons `(,a ,(if (lookup b area block-level)
+                                                        `(ref ,b)
+                                                        b) ,block-level) area))
                              (exec `,a block-level area)]
       ['undefined            'undefined]
       ['(undefined)          'undefined]
@@ -131,11 +138,11 @@
 ; ;;;;;;;;;; ;;        ;;     ;;     ;;;;;;;;;; ;;  ;;;;;; ;;         ;;      ;; ;;;;;;;;;; ;;;;;;;;;;           "How you know this stuff is working."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-
 (define (exec-repl)
   (display ">>>(Alonzo)>>> ")
-  (displayln (exec (read (open-input-string (string-append "(" (read-line) ")")))))
-  (exec-repl))
+  (define res (exec (read (open-input-string (string-append "(" (read-line) ")")))))
+  (pretty-print res)
+  (and (not (eq? res 'exit)) (exec-repl)))
 
 (define (exec-file file-name)
   (map exec (split separator (file->list file-name))))

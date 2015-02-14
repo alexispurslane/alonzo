@@ -1,1 +1,0 @@
-("6.1.1" ("ee064e43becfb4ee15b710ae2ba9f2b5dc612e7f" . "94be1ba1a147709289d6fb0d396265c39cd00f0e") (collects #"errortrace" #"errortrace-key.rkt") (collects #"racket" #"main.rkt") #"/Users/christopherdumas/alonzo/alonzo-syntax-reader.rkt" (collects #"racket" #"runtime-config.rkt") (collects #"syntax" #"readerr.rkt"))
