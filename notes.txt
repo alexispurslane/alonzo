@@ -1,0 +1,1 @@
+The last Alonzo bug is this: If there is a function with an argument named the same as the function that it is being passed into's argument for it, they will collide, with the inner function's name first.

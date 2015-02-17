@@ -10,11 +10,11 @@ cons ↦ (fn (el list) {
 }) ..
 
 head ↦ (fn (list) {
-  .. list((fn (h t) { h }))
+  .. list((fn (h t) { .. h }))
 }) ..
 
 tail ↦ (fn (list) {
-  .. list((fn (h t) { t }))
+  .. list((fn (h t) { .. t }))
 }) ..
 
 empty? ↦ (fn (list) {
